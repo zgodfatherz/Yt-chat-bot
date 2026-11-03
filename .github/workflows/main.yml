@@ -1,12 +1,29 @@
-name: YouTube Live Chat Point Farmer
+name: T1 Ranjha Auto Chat Farmer
 
 on:
+  schedule:
+    # Afternoon checks: 2:00 PM & 3:00 PM IST (08:30 & 09:30 UTC)
+    - cron: '30 8,9 * * *'
+    # Afternoon follow-up checks: 2:15 PM & 3:15 PM IST (08:45 & 09:45 UTC)
+    - cron: '45 8,9 * * *'
+    # Night check 1: 10:00 PM IST (16:30 UTC)
+    - cron: '30 16 * * *'
+    # Night check 2: 10:10 PM IST (16:40 UTC)
+    - cron: '40 16 * * *'
   workflow_dispatch:
     inputs:
       video_id:
-        description: 'Paste the YouTube Live Stream Link or Video ID'
-        required: true
+        description: 'Optional: Stream link (Leave blank to auto-detect @T1RANJHA)'
+        required: false
         default: ''
+
+# Prevents a second bot from starting if the first check is already farming the stream
+concurrency:
+  group: t1ranjha-live-farmer
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   farm-points:
@@ -14,6 +31,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Keep repository active for 2+ years (Prevent 60-day GitHub sleep)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          date -u +"Last checked: %Y-%m-%d %H:%M:%S UTC" > .last_check
+          git add .last_check
+          git diff --staged --quiet || git commit -m "Auto keep-alive check"
+          git push || true
 
       - name: Set up Python
         uses: actions/setup-python@v5
