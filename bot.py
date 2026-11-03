@@ -10,7 +10,9 @@ CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET")
 REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN")
 VIDEO_ID_OR_URL = os.environ.get("VIDEO_ID", "").strip()
 
-# Natural viewer messages (no duplicates allowed in recent history)
+# Strictly locked to T1 Ranjha Live (@T1RANJHA)
+TARGET_HANDLE = "@T1RANJHA"
+
 CASUAL_MESSAGES = [
     ".",
     "🍿",
@@ -19,15 +21,16 @@ CASUAL_MESSAGES = [
     "nice",
     "op",
     "🔥",
-    "let's go",
+    "badiya",
     "..",
     "💯",
-    "solid gameplay",
+    "op gameplay",
     "clutch",
-    "⚡"
+    "⚡",
+    "mast"
 ]
 
-HYPE_MESSAGES = ["gg", "op", "🔥", "nice", "clutch", "💯", "👀"]
+HYPE_MESSAGES = ["gg", "op", "🔥", "nice", "clutch", "💯", "op भाई", "⚡"]
 QUIET_MESSAGES = [".", "🍿", "👀", "..", "gg", "🔥"]
 
 
@@ -52,23 +55,57 @@ def get_youtube_client():
     return build("youtube", "v3", credentials=creds)
 
 
-def get_live_chat_id(youtube, video_id):
+def get_target_channel_id(youtube):
+    res = youtube.channels().list(
+        part="id,snippet",
+        forHandle=TARGET_HANDLE
+    ).execute()
+    items = res.get("items", [])
+    if not items:
+        print(f"Could not find channel for {TARGET_HANDLE}")
+        return None
+    ch_id = items[0]["id"]
+    ch_title = items[0]["snippet"]["title"]
+    print(f"Locked onto Target Channel: {ch_title} ({ch_id})")
+    return ch_id
+
+
+def find_active_stream_for_channel(youtube, channel_id):
+    res = youtube.search().list(
+        part="id,snippet",
+        channelId=channel_id,
+        eventType="live",
+        type="video",
+        maxResults=1
+    ).execute()
+    items = res.get("items", [])
+    if not items:
+        return None
+    video_id = items[0]["id"]["videoId"]
+    title = items[0]["snippet"]["title"]
+    print(f"Auto-detected live stream: {title} ({video_id})")
+    return video_id
+
+
+def get_live_chat_id(youtube, video_id, target_channel_id):
     res = youtube.videos().list(
         part="liveStreamingDetails,snippet",
         id=video_id
     ).execute()
     items = res.get("items", [])
     if not items:
-        print("Video not found. Check your Video ID or URL.")
         return None
-    title = items[0].get("snippet", {}).get("title", "Unknown Stream")
-    print(f"Found Stream: {title}")
+
+    video_channel_id = items[0].get("snippet", {}).get("channelId")
+    if target_channel_id and video_channel_id != target_channel_id:
+        print("Safety Lock: Stream does not belong to @T1RANJHA! Aborting.")
+        return None
+
     details = items[0].get("liveStreamingDetails", {})
     return details.get("activeLiveChatId")
 
 
 def analyze_chat_mood(youtube, live_chat_id):
-    """Reads recent chat messages to match the current stream situation."""
     try:
         res = youtube.liveChatMessages().list(
             liveChatId=live_chat_id,
@@ -84,7 +121,7 @@ def analyze_chat_mood(youtube, live_chat_id):
             for item in items[-10:]
         ]
 
-        hype_words = ["gg", "op", "nice", "clutch", "w", "fire", "insane", "lol", "haha"]
+        hype_words = ["gg", "op", "nice", "clutch", "w", "fire", "badiya", "mast", "insane"]
         dot_count = sum(1 for t in recent_texts if t in [".", ".."])
         hype_count = sum(1 for t in recent_texts if any(w in t for w in hype_words))
 
@@ -93,13 +130,11 @@ def analyze_chat_mood(youtube, live_chat_id):
         elif dot_count >= 2:
             return "quiet"
         return "normal"
-    except Exception as e:
-        print(f"Could not read chat mood: {e}")
+    except Exception:
         return "normal"
 
 
 def choose_next_message(recent_history, msg_counter, next_points_check, mood):
-    # Check "!points" periodically without repeating it back-to-back
     if msg_counter >= next_points_check and "!points" not in recent_history:
         return "!points", True
 
@@ -110,13 +145,11 @@ def choose_next_message(recent_history, msg_counter, next_points_check, mood):
     else:
         pool = CASUAL_MESSAGES
 
-    # Filter out any message sent in the last 4 turns to prevent spam strikes
     available = [m for m in pool if m not in recent_history]
     if not available:
         available = [m for m in CASUAL_MESSAGES if m not in recent_history]
 
-    chosen = random.choice(available)
-    return chosen, False
+    return random.choice(available), False
 
 
 def send_chat_message(youtube, live_chat_id, text):
@@ -139,30 +172,35 @@ def send_chat_message(youtube, live_chat_id, text):
 
 
 def main():
-    if not VIDEO_ID_OR_URL:
-        print("Error: Please enter the Stream Video ID or URL when starting the workflow.")
-        return
-
-    video_id = extract_video_id(VIDEO_ID_OR_URL)
     youtube = get_youtube_client()
-    live_chat_id = get_live_chat_id(youtube, video_id)
+    target_channel_id = get_target_channel_id(youtube)
 
-    if not live_chat_id:
-        print("No active live chat found (stream might have ended or not started yet).")
+    if VIDEO_ID_OR_URL:
+        video_id = extract_video_id(VIDEO_ID_OR_URL)
+    else:
+        if not target_channel_id:
+            return
+        video_id = find_active_stream_for_channel(youtube, target_channel_id)
+
+    if not video_id:
+        print("@T1RANJHA is not live right now. Exiting check cleanly.")
         return
 
-    print(f"Successfully connected to Live Chat ID: {live_chat_id}")
+    live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
+    if not live_chat_id:
+        print("No active live chat found.")
+        return
 
-    # Keep track of the last 4 messages so it never repeats 2 or 3 times
+    print(f"Connected to @T1RANJHA Live Chat ID: {live_chat_id}")
+
     recent_history = deque(maxlen=4)
     msg_counter = 0
     next_points_check = random.randint(5, 8)
     start_time = time.time()
 
-    # Run up to 5.5 hours (GitHub Actions max job duration)
-    while time.time() - start_time < 19800:
-        # Check if stream is still live and read the room
-        live_chat_id = get_live_chat_id(youtube, video_id)
+    # Runs for up to 4.5 hours (16200s) to easily cover a 3.5-hour stream
+    while time.time() - start_time < 16200:
+        live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
         if not live_chat_id:
             print("Stream ended. Stopping bot safely.")
             break
@@ -172,8 +210,7 @@ def main():
             recent_history, msg_counter, next_points_check, mood
         )
 
-        success = send_chat_message(youtube, live_chat_id, msg)
-        if success:
+        if send_chat_message(youtube, live_chat_id, msg):
             recent_history.append(msg)
             if is_points_cmd:
                 msg_counter = 0
@@ -181,7 +218,6 @@ def main():
             else:
                 msg_counter += 1
 
-        # Human-like random delay between 75 and 140 seconds
         sleep_time = random.randint(75, 140)
         print(f"Waiting {sleep_time} seconds before next message...")
         time.sleep(sleep_time)
@@ -189,4 +225,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-  
+        
