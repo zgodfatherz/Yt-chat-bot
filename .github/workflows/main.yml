@@ -1,0 +1,33 @@
+name: YouTube Live Chat Point Farmer
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: 'Paste the YouTube Live Stream Link or Video ID'
+        required: true
+        default: ''
+
+jobs:
+  farm-points:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install google-api-python-client google-auth google-auth-oauthlib
+
+      - name: Run Chat Farmer
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          VIDEO_ID: ${{ github.event.inputs.video_id }}
+        run: python bot.py
+        
