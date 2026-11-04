@@ -5,12 +5,12 @@ from collections import deque
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-CLIENT_ID = os.environ.get("YT_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET")
-REFRESH_TOKEN = os.environ.get("YT_REFRESH_TOKEN")
+# Automatically strip any accidental spaces, newlines, or quotes from GitHub Secrets
+CLIENT_ID = "".join(os.environ.get("YT_CLIENT_ID", "").split()).strip('"\'')
+CLIENT_SECRET = "".join(os.environ.get("YT_CLIENT_SECRET", "").split()).strip('"\'')
+REFRESH_TOKEN = "".join(os.environ.get("YT_REFRESH_TOKEN", "").split()).strip('"\'')
 VIDEO_ID_OR_URL = os.environ.get("VIDEO_ID", "").strip()
 
-# Strictly locked to T1 Ranjha Live (@T1RANJHA)
 TARGET_HANDLE = "@T1RANJHA"
 
 CASUAL_MESSAGES = [
@@ -34,6 +34,14 @@ HYPE_MESSAGES = ["gg", "op", "🔥", "nice", "clutch", "💯", "op भाई", "
 QUIET_MESSAGES = [".", "🍿", "👀", "..", "gg", "🔥"]
 
 
+def check_credentials_format():
+    print(f"Checking secrets... ID length: {len(CLIENT_ID)}, Secret length: {len(CLIENT_SECRET)}, Token length: {len(REFRESH_TOKEN)}")
+    if not CLIENT_ID or not CLIENT_SECRET or not REFRESH_TOKEN:
+        raise ValueError("One or more GitHub Secrets are completely empty! Check Settings -> Secrets -> Actions.")
+    if len(CLIENT_ID) > 4:
+        print(f"Client ID starts with: {CLIENT_ID[:6]}... and ends with: ...{CLIENT_ID[-28:]}")
+
+
 def extract_video_id(input_str):
     if "v=" in input_str:
         return input_str.split("v=")[1].split("&")[0]
@@ -45,6 +53,7 @@ def extract_video_id(input_str):
 
 
 def get_youtube_client():
+    check_credentials_format()
     creds = Credentials(
         None,
         refresh_token=REFRESH_TOKEN,
@@ -198,7 +207,6 @@ def main():
     next_points_check = random.randint(5, 8)
     start_time = time.time()
 
-    # Runs for up to 4.5 hours (16200s) to easily cover a 3.5-hour stream
     while time.time() - start_time < 16200:
         live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
         if not live_chat_id:
@@ -225,4 +233,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+            
