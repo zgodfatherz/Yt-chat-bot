@@ -13,33 +13,29 @@ VIDEO_ID_OR_URL = os.environ.get("VIDEO_ID", "").strip()
 
 TARGET_HANDLE = "@T1RANJHA"
 
-CASUAL_MESSAGES = [
-    ".",
-    "🍿",
-    "👀",
-    "gg",
-    "nice",
-    "op",
-    "🔥",
-    "badiya",
-    "..",
-    "💯",
-    "op gameplay",
-    "clutch",
-    "⚡",
-    "mast"
-]
+# Sent ONLY ONCE when the bot first joins the stream
+WELCOME_MESSAGE = "I am back in the stream yo"
 
-HYPE_MESSAGES = ["gg", "op", "🔥", "nice", "clutch", "💯", "op भाई", "⚡"]
-QUIET_MESSAGES = [".", "🍿", "👀", "..", "gg", "🔥"]
+# Only emojis, dots, and "yo yo" (11 items so the 4-message anti-repeat filter always has plenty of choices)
+SAFE_MESSAGES = [
+    "🍿",
+    "💯",
+    "yo yo",
+    "..",
+    ".",
+    "🔥",
+    "👀",
+    "...",
+    "⚡",
+    "✌️",
+    "😎"
+]
 
 
 def check_credentials_format():
     print(f"Checking secrets... ID length: {len(CLIENT_ID)}, Secret length: {len(CLIENT_SECRET)}, Token length: {len(REFRESH_TOKEN)}")
     if not CLIENT_ID or not CLIENT_SECRET or not REFRESH_TOKEN:
         raise ValueError("One or more GitHub Secrets are completely empty! Check Settings -> Secrets -> Actions.")
-    if len(CLIENT_ID) > 4:
-        print(f"Client ID starts with: {CLIENT_ID[:6]}... and ends with: ...{CLIENT_ID[-28:]}")
 
 
 def extract_video_id(input_str):
@@ -114,49 +110,13 @@ def get_live_chat_id(youtube, video_id, target_channel_id):
     return details.get("activeLiveChatId")
 
 
-def analyze_chat_mood(youtube, live_chat_id):
-    try:
-        res = youtube.liveChatMessages().list(
-            liveChatId=live_chat_id,
-            part="snippet",
-            maxResults=20
-        ).execute()
-        items = res.get("items", [])
-        if not items:
-            return "quiet"
-
-        recent_texts = [
-            item["snippet"].get("displayMessage", "").lower().strip()
-            for item in items[-10:]
-        ]
-
-        hype_words = ["gg", "op", "nice", "clutch", "w", "fire", "badiya", "mast", "insane"]
-        dot_count = sum(1 for t in recent_texts if t in [".", ".."])
-        hype_count = sum(1 for t in recent_texts if any(w in t for w in hype_words))
-
-        if hype_count >= 2:
-            return "hype"
-        elif dot_count >= 2:
-            return "quiet"
-        return "normal"
-    except Exception:
-        return "normal"
-
-
-def choose_next_message(recent_history, msg_counter, next_points_check, mood):
+def choose_next_message(recent_history, msg_counter, next_points_check):
     if msg_counter >= next_points_check and "!points" not in recent_history:
         return "!points", True
 
-    if mood == "hype":
-        pool = HYPE_MESSAGES
-    elif mood == "quiet":
-        pool = QUIET_MESSAGES
-    else:
-        pool = CASUAL_MESSAGES
-
-    available = [m for m in pool if m not in recent_history]
+    available = [m for m in SAFE_MESSAGES if m not in recent_history]
     if not available:
-        available = [m for m in CASUAL_MESSAGES if m not in recent_history]
+        available = SAFE_MESSAGES
 
     return random.choice(available), False
 
@@ -204,19 +164,26 @@ def main():
 
     recent_history = deque(maxlen=4)
     msg_counter = 0
-    next_points_check = random.randint(5, 8)
+    next_points_check = random.randint(6, 9)
     start_time = time.time()
+    sent_welcome = False
 
+    # Runs for up to 4.5 hours (16200s) to cover a 3.5-hour stream
     while time.time() - start_time < 16200:
         live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
         if not live_chat_id:
             print("Stream ended. Stopping bot safely.")
             break
 
-        mood = analyze_chat_mood(youtube, live_chat_id)
-        msg, is_points_cmd = choose_next_message(
-            recent_history, msg_counter, next_points_check, mood
-        )
+        # Send the greeting message ONLY ONCE at the very start of the stream
+        if not sent_welcome:
+            msg = WELCOME_MESSAGE
+            is_points_cmd = False
+            sent_welcome = True
+        else:
+            msg, is_points_cmd = choose_next_message(
+                recent_history, msg_counter, next_points_check
+            )
 
         if send_chat_message(youtube, live_chat_id, msg):
             recent_history.append(msg)
@@ -233,4 +200,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
+    
