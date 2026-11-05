@@ -16,7 +16,10 @@ TARGET_HANDLE = "@T1RANJHA"
 # Sent ONLY ONCE when the bot first joins the stream
 WELCOME_MESSAGE = "I am back in the stream yo"
 
-# Only emojis, dots, and "yo yo" (11 items so the 4-message anti-repeat filter always has plenty of choices)
+# Commands sent periodically every 6 to 9 messages
+COMMANDS = ["!points", "!top"]
+
+# Only emojis, dots, and "yo yo"
 SAFE_MESSAGES = [
     "🍿",
     "💯",
@@ -110,9 +113,11 @@ def get_live_chat_id(youtube, video_id, target_channel_id):
     return details.get("activeLiveChatId")
 
 
-def choose_next_message(recent_history, msg_counter, next_points_check):
-    if msg_counter >= next_points_check and "!points" not in recent_history:
-        return "!points", True
+def choose_next_message(recent_history, msg_counter, next_cmd_check, cmd_index):
+    if msg_counter >= next_cmd_check:
+        cmd = COMMANDS[cmd_index % len(COMMANDS)]
+        if cmd not in recent_history:
+            return cmd, True
 
     available = [m for m in SAFE_MESSAGES if m not in recent_history]
     if not available:
@@ -164,7 +169,8 @@ def main():
 
     recent_history = deque(maxlen=4)
     msg_counter = 0
-    next_points_check = random.randint(6, 9)
+    next_cmd_check = random.randint(6, 9)
+    cmd_index = 0
     start_time = time.time()
     sent_welcome = False
 
@@ -178,18 +184,19 @@ def main():
         # Send the greeting message ONLY ONCE at the very start of the stream
         if not sent_welcome:
             msg = WELCOME_MESSAGE
-            is_points_cmd = False
+            is_cmd = False
             sent_welcome = True
         else:
-            msg, is_points_cmd = choose_next_message(
-                recent_history, msg_counter, next_points_check
+            msg, is_cmd = choose_next_message(
+                recent_history, msg_counter, next_cmd_check, cmd_index
             )
 
         if send_chat_message(youtube, live_chat_id, msg):
             recent_history.append(msg)
-            if is_points_cmd:
+            if is_cmd:
                 msg_counter = 0
-                next_points_check = random.randint(6, 9)
+                next_cmd_check = random.randint(6, 9)
+                cmd_index += 1
             else:
                 msg_counter += 1
 
@@ -200,4 +207,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+                     
