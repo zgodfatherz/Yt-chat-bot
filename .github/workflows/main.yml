@@ -2,14 +2,19 @@ name: T1 Ranjha Auto Chat Farmer
 
 on:
   schedule:
-    # Afternoon checks: 2:00 PM & 3:00 PM IST (08:30 & 09:30 UTC)
-    - cron: '30 8,9 * * *'
-    # Afternoon follow-up checks: 2:15 PM & 3:15 PM IST (08:45 & 09:45 UTC)
-    - cron: '45 8,9 * * *'
-    # Night check 1: 10:00 PM IST (16:30 UTC)
-    - cron: '30 16 * * *'
-    # Night check 2: 10:10 PM IST (16:40 UTC)
-    - cron: '40 16 * * *'
+    # Afternoon Window: 2:00 PM, 2:20 PM, 3:00 PM, 3:30 PM, 4:30 PM IST
+    - cron: '30 8 * * *'
+    - cron: '50 8 * * *'
+    - cron: '30 9 * * *'
+    - cron: '0 10 * * *'
+    - cron: '0 11 * * *'
+    # Night Window: 9:55 PM, 10:15 PM, 10:45 PM, 11:30 PM, 12:30 AM, 1:30 AM IST
+    - cron: '25 16 * * *'
+    - cron: '45 16 * * *'
+    - cron: '15 17 * * *'
+    - cron: '0 18 * * *'
+    - cron: '0 19 * * *'
+    - cron: '0 20 * * *'
   workflow_dispatch:
     inputs:
       video_id:
@@ -47,7 +52,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install google-api-python-client google-auth google-auth-oauthlib
+        run: pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
 
       - name: Run Chat Farmer
         env:
