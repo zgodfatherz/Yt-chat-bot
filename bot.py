@@ -5,7 +5,6 @@ from collections import deque
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-# Automatically strip any accidental spaces, newlines, or quotes from GitHub Secrets
 CLIENT_ID = "".join(os.environ.get("YT_CLIENT_ID", "").split()).strip('"\'')
 CLIENT_SECRET = "".join(os.environ.get("YT_CLIENT_SECRET", "").split()).strip('"\'')
 REFRESH_TOKEN = "".join(os.environ.get("YT_REFRESH_TOKEN", "").split()).strip('"\'')
@@ -16,10 +15,10 @@ TARGET_HANDLE = "@T1RANJHA"
 # Sent ONLY ONCE when the bot first joins the stream
 WELCOME_MESSAGE = "I am back in the stream yo"
 
-# Commands sent periodically every 6 to 9 messages
-COMMANDS = ["!points", "!top"]
+# Commands sent periodically to check your points & hours in logs
+COMMANDS = ["!points", "!top", "!tophours"]
 
-# Only emojis, dots, and "yo yo"
+# Clean emojis, dots, and "yo yo"
 SAFE_MESSAGES = [
     "🍿",
     "💯",
@@ -35,24 +34,9 @@ SAFE_MESSAGES = [
 ]
 
 
-def check_credentials_format():
-    print(f"Checking secrets... ID length: {len(CLIENT_ID)}, Secret length: {len(CLIENT_SECRET)}, Token length: {len(REFRESH_TOKEN)}")
-    if not CLIENT_ID or not CLIENT_SECRET or not REFRESH_TOKEN:
-        raise ValueError("One or more GitHub Secrets are completely empty! Check Settings -> Secrets -> Actions.")
-
-
-def extract_video_id(input_str):
-    if "v=" in input_str:
-        return input_str.split("v=")[1].split("&")[0]
-    elif "youtu.be/" in input_str:
-        return input_str.split("youtu.be/")[1].split("?")[0]
-    elif "/live/" in input_str:
-        return input_str.split("/live/")[1].split("?")[0]
-    return input_str.strip()
-
-
 def get_youtube_client():
-    check_credentials_format()
+    if not CLIENT_ID or not CLIENT_SECRET or not REFRESH_TOKEN:
+        raise ValueError("One or more GitHub Secrets are empty!")
     creds = Credentials(
         None,
         refresh_token=REFRESH_TOKEN,
@@ -60,7 +44,7 @@ def get_youtube_client():
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET
     )
-    return build("youtube", "v3", credentials=creds)
+    return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
 
 def get_target_channel_id(youtube):
@@ -70,11 +54,9 @@ def get_target_channel_id(youtube):
     ).execute()
     items = res.get("items", [])
     if not items:
-        print(f"Could not find channel for {TARGET_HANDLE}")
         return None
     ch_id = items[0]["id"]
-    ch_title = items[0]["snippet"]["title"]
-    print(f"Locked onto Target Channel: {ch_title} ({ch_id})")
+    print(f"Locked onto Target Channel: {items[0]['snippet']['title']} ({ch_id})", flush=True)
     return ch_id
 
 
@@ -90,27 +72,26 @@ def find_active_stream_for_channel(youtube, channel_id):
     if not items:
         return None
     video_id = items[0]["id"]["videoId"]
-    title = items[0]["snippet"]["title"]
-    print(f"Auto-detected live stream: {title} ({video_id})")
+    print(f"Auto-detected live stream: {items[0]['snippet']['title']} ({video_id})", flush=True)
     return video_id
 
 
 def get_live_chat_id(youtube, video_id, target_channel_id):
-    res = youtube.videos().list(
-        part="liveStreamingDetails,snippet",
-        id=video_id
-    ).execute()
-    items = res.get("items", [])
-    if not items:
-        return None
-
-    video_channel_id = items[0].get("snippet", {}).get("channelId")
-    if target_channel_id and video_channel_id != target_channel_id:
-        print("Safety Lock: Stream does not belong to @T1RANJHA! Aborting.")
-        return None
-
-    details = items[0].get("liveStreamingDetails", {})
-    return details.get("activeLiveChatId")
+    try:
+        res = youtube.videos().list(
+            part="liveStreamingDetails,snippet",
+            id=video_id
+        ).execute()
+        items = res.get("items", [])
+        if not items:
+            return None
+        video_channel_id = items[0].get("snippet", {}).get("channelId")
+        if target_channel_id and video_channel_id != target_channel_id:
+            return None
+        return items[0].get("liveStreamingDetails", {}).get("activeLiveChatId")
+    except Exception as e:
+        print(f"Network glitch checking stream status: {e}", flush=True)
+        return "RETRY"
 
 
 def choose_next_message(recent_history, msg_counter, next_cmd_check, cmd_index):
@@ -122,7 +103,6 @@ def choose_next_message(recent_history, msg_counter, next_cmd_check, cmd_index):
     available = [m for m in SAFE_MESSAGES if m not in recent_history]
     if not available:
         available = SAFE_MESSAGES
-
     return random.choice(available), False
 
 
@@ -138,73 +118,116 @@ def send_chat_message(youtube, live_chat_id, text):
                 }
             }
         ).execute()
-        print(f"Sent message: {text}")
+        print(f"Sent message: {text}", flush=True)
         return True
     except Exception as e:
-        print(f"Error sending message: {e}")
+        err_str = str(e)
+        print(f"Error sending message: {err_str}", flush=True)
+        if "liveChatEnded" in err_str or "liveChatDisabled" in err_str:
+            return "ENDED"
         return False
+
+
+def log_streamlabs_reply(youtube, live_chat_id):
+    try:
+        time.sleep(6)
+        res = youtube.liveChatMessages().list(
+            liveChatId=live_chat_id,
+            part="snippet,authorDetails",
+            maxResults=15
+        ).execute()
+        items = res.get("items", [])
+        print("--- Checking Chat for @Streamlabs Reply ---", flush=True)
+        for item in items[-8:]:
+            author = item.get("authorDetails", {}).get("displayName", "Unknown")
+            text = item.get("snippet", {}).get("displayMessage", "")
+            print(f"  [Chat] {author}: {text}", flush=True)
+        print("-------------------------------------------", flush=True)
+    except Exception as e:
+        print(f"Could not read chat reply: {e}", flush=True)
 
 
 def main():
     youtube = get_youtube_client()
     target_channel_id = get_target_channel_id(youtube)
+    if not target_channel_id:
+        return
 
-    if VIDEO_ID_OR_URL:
-        video_id = extract_video_id(VIDEO_ID_OR_URL)
-    else:
-        if not target_channel_id:
-            return
-        video_id = find_active_stream_for_channel(youtube, target_channel_id)
-
+    video_id = find_active_stream_for_channel(youtube, target_channel_id)
     if not video_id:
-        print("@T1RANJHA is not live right now. Exiting check cleanly.")
+        print("@T1RANJHA is not live right now. Exiting check cleanly.", flush=True)
         return
 
     live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
-    if not live_chat_id:
-        print("No active live chat found.")
+    if not live_chat_id or live_chat_id == "RETRY":
+        print("No active live chat found.", flush=True)
         return
 
-    print(f"Connected to @T1RANJHA Live Chat ID: {live_chat_id}")
+    print(f"Connected to @T1RANJHA Live Chat ID: {live_chat_id}", flush=True)
 
     recent_history = deque(maxlen=4)
     msg_counter = 0
     next_cmd_check = random.randint(6, 9)
     cmd_index = 0
+    consecutive_failures = 0
     start_time = time.time()
     sent_welcome = False
 
-    # Runs for up to 4.5 hours (16200s) to cover a 3.5-hour stream
-    while time.time() - start_time < 16200:
-        live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
-        if not live_chat_id:
-            print("Stream ended. Stopping bot safely.")
-            break
-
-        # Send the greeting message ONLY ONCE at the very start of the stream
-        if not sent_welcome:
-            msg = WELCOME_MESSAGE
-            is_cmd = False
-            sent_welcome = True
-        else:
-            msg, is_cmd = choose_next_message(
-                recent_history, msg_counter, next_cmd_check, cmd_index
-            )
-
-        if send_chat_message(youtube, live_chat_id, msg):
-            recent_history.append(msg)
-            if is_cmd:
-                msg_counter = 0
-                next_cmd_check = random.randint(6, 9)
-                cmd_index += 1
+    # Runs for up to 5.5 hours (19800s) continuously
+    while time.time() - start_time < 19800:
+        try:
+            if not sent_welcome:
+                msg = WELCOME_MESSAGE
+                is_cmd = False
+                sent_welcome = True
             else:
-                msg_counter += 1
+                msg, is_cmd = choose_next_message(
+                    recent_history, msg_counter, next_cmd_check, cmd_index
+                )
 
-        sleep_time = random.randint(75, 140)
-        print(f"Waiting {sleep_time} seconds before next message...")
+            result = send_chat_message(youtube, live_chat_id, msg)
+
+            if result == "ENDED":
+                print("Live chat officially ended. Stopping bot safely.", flush=True)
+                break
+            elif result is True:
+                consecutive_failures = 0
+                recent_history.append(msg)
+                if is_cmd:
+                    log_streamlabs_reply(youtube, live_chat_id)
+                    msg_counter = 0
+                    next_cmd_check = random.randint(6, 9)
+                    cmd_index += 1
+                else:
+                    msg_counter += 1
+            else:
+                consecutive_failures += 1
+                print(f"Retry {consecutive_failures}/6 - Rebuilding YouTube client...", flush=True)
+                youtube = get_youtube_client()
+                if consecutive_failures >= 6:
+                    check = get_live_chat_id(youtube, video_id, target_channel_id)
+                    if not check:
+                        print("Stream confirmed offline after 6 retries. Exiting.", flush=True)
+                        break
+                    else:
+                        if check != "RETRY":
+                            live_chat_id = check
+                        consecutive_failures = 0
+
+        except Exception as loop_err:
+            print(f"Recovered from unexpected loop error: {loop_err}", flush=True)
+            time.sleep(15)
+            try:
+                youtube = get_youtube_client()
+            except Exception:
+                pass
+
+        # 65 to 110 seconds guarantees we never miss a 5-minute Streamlabs point tick!
+        sleep_time = random.randint(65, 110)
+        print(f"Waiting {sleep_time} seconds before next message...", flush=True)
         time.sleep(sleep_time)
 
 
 if __name__ == "__main__":
     main()
-                     
+        
