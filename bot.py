@@ -34,6 +34,16 @@ SAFE_MESSAGES = [
 ]
 
 
+def extract_video_id(input_str):
+    if "v=" in input_str:
+        return input_str.split("v=")[1].split("&")[0]
+    elif "youtu.be/" in input_str:
+        return input_str.split("youtu.be/")[1].split("?")[0]
+    elif "/live/" in input_str:
+        return input_str.split("/live/")[1].split("?")[0]
+    return input_str.strip()
+
+
 def get_youtube_client():
     if not CLIENT_ID or not CLIENT_SECRET or not REFRESH_TOKEN:
         raise ValueError("One or more GitHub Secrets are empty!")
@@ -47,33 +57,76 @@ def get_youtube_client():
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
 
-def get_target_channel_id(youtube):
+def get_target_channel_info(youtube):
     res = youtube.channels().list(
-        part="id,snippet",
+        part="id,snippet,contentDetails",
         forHandle=TARGET_HANDLE
     ).execute()
     items = res.get("items", [])
     if not items:
-        return None
+        return None, None
     ch_id = items[0]["id"]
+    uploads_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
     print(f"Locked onto Target Channel: {items[0]['snippet']['title']} ({ch_id})", flush=True)
-    return ch_id
+    return ch_id, uploads_id
 
 
-def find_active_stream_for_channel(youtube, channel_id):
-    res = youtube.search().list(
-        part="id,snippet",
-        channelId=channel_id,
-        eventType="live",
-        type="video",
-        maxResults=1
-    ).execute()
-    items = res.get("items", [])
-    if not items:
-        return None
-    video_id = items[0]["id"]["videoId"]
-    print(f"Auto-detected live stream: {items[0]['snippet']['title']} ({video_id})", flush=True)
-    return video_id
+def find_active_stream(youtube, channel_id, uploads_playlist_id):
+    """
+    Method 1: Instant check via Channel Uploads Playlist (Zero YouTube search lag, 1-second detection).
+    Method 2: Fallback to YouTube Search API if needed.
+    """
+    # Method 1: Check latest 5 videos in the channel's Uploads playlist
+    if uploads_playlist_id:
+        try:
+            pl_res = youtube.playlistItems().list(
+                part="contentDetails,snippet",
+                playlistId=uploads_playlist_id,
+                maxResults=5
+            ).execute()
+            video_ids = [
+                item["contentDetails"]["videoId"]
+                for item in pl_res.get("items", [])
+                if "contentDetails" in item and "videoId" in item["contentDetails"]
+            ]
+            if video_ids:
+                v_res = youtube.videos().list(
+                    part="liveStreamingDetails,snippet",
+                    id=",".join(video_ids)
+                ).execute()
+                for v in v_res.get("items", []):
+                    live_details = v.get("liveStreamingDetails", {})
+                    chat_id = live_details.get("activeLiveChatId")
+                    # Ensure the stream is actively live right now (has active chat and hasn't ended)
+                    if chat_id and not live_details.get("actualEndTime"):
+                        vid = v["id"]
+                        title = v["snippet"]["title"]
+                        print(f"Instant-detected live stream via Uploads: {title} ({vid})", flush=True)
+                        return vid, chat_id
+        except Exception as e:
+            print(f"Uploads playlist check warning: {e}", flush=True)
+
+    # Method 2: Fallback to YouTube Search API
+    try:
+        res = youtube.search().list(
+            part="id,snippet",
+            channelId=channel_id,
+            eventType="live",
+            type="video",
+            maxResults=1
+        ).execute()
+        items = res.get("items", [])
+        if items:
+            vid = items[0]["id"]["videoId"]
+            title = items[0]["snippet"]["title"]
+            chat_id = get_live_chat_id(youtube, vid, channel_id)
+            if chat_id and chat_id != "RETRY":
+                print(f"Auto-detected live stream via Search: {title} ({vid})", flush=True)
+                return vid, chat_id
+    except Exception as e:
+        print(f"Search fallback warning: {e}", flush=True)
+
+    return None, None
 
 
 def get_live_chat_id(youtube, video_id, target_channel_id):
@@ -149,18 +202,18 @@ def log_streamlabs_reply(youtube, live_chat_id):
 
 def main():
     youtube = get_youtube_client()
-    target_channel_id = get_target_channel_id(youtube)
+    target_channel_id, uploads_playlist_id = get_target_channel_info(youtube)
     if not target_channel_id:
         return
 
-    video_id = find_active_stream_for_channel(youtube, target_channel_id)
-    if not video_id:
-        print("@T1RANJHA is not live right now. Exiting check cleanly.", flush=True)
-        return
+    if VIDEO_ID_OR_URL:
+        video_id = extract_video_id(VIDEO_ID_OR_URL)
+        live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
+    else:
+        video_id, live_chat_id = find_active_stream(youtube, target_channel_id, uploads_playlist_id)
 
-    live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
-    if not live_chat_id or live_chat_id == "RETRY":
-        print("No active live chat found.", flush=True)
+    if not video_id or not live_chat_id or live_chat_id == "RETRY":
+        print("@T1RANJHA is not live right now. Exiting check cleanly.", flush=True)
         return
 
     print(f"Connected to @T1RANJHA Live Chat ID: {live_chat_id}", flush=True)
@@ -222,7 +275,6 @@ def main():
             except Exception:
                 pass
 
-        # 65 to 110 seconds guarantees we never miss a 5-minute Streamlabs point tick!
         sleep_time = random.randint(65, 110)
         print(f"Waiting {sleep_time} seconds before next message...", flush=True)
         time.sleep(sleep_time)
@@ -230,4 +282,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+            
