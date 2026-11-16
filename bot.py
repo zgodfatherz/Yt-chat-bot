@@ -15,17 +15,10 @@ VIDEO_ID_OR_URL = os.environ.get("VIDEO_ID", "").strip()
 TARGET_HANDLE = "@T1RANJHA"
 TARGET_CHANNEL_ID = "UCcxrFIi2FidgaUcNj2R-lUw"
 
-# Sent ONLY ONCE when the bot first joins the stream
-WELCOME_MESSAGE = "I am back in the stream yo"
-
-# Commands sent periodically to check your points & hours in logs
-COMMANDS = ["!points", "!top", "!tophours"]
-
-# Clean emojis, dots, and "yo yo"
+# Pure dots and safe emojis only (No commands, no welcome messages)
 SAFE_MESSAGES = [
     "🍿",
     "💯",
-    "yo yo",
     "..",
     ".",
     "🔥",
@@ -61,7 +54,6 @@ def get_youtube_client():
 
 
 def scrape_channel_live_video_ids(channel_id):
-    """Fetches @T1RANJHA/live and /streams directly to get live video IDs with zero API lag."""
     urls = [
         f"https://www.youtube.com/channel/{channel_id}/live",
         "https://www.youtube.com/@T1RANJHA/live",
@@ -77,12 +69,10 @@ def scrape_channel_live_video_ids(channel_id):
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
                 html = resp.read().decode("utf-8", errors="ignore")
-            # 1. Check canonical watch URL on /live page
             canon = re.findall(r'rel="canonical"\s+href="https://www\.youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})"', html)
             for vid in canon:
                 if vid not in found_ids:
                     found_ids.append(vid)
-            # 2. Extract videoIds listed on the /live and /streams tabs
             vids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
             for vid in vids[:10]:
                 if vid not in found_ids:
@@ -95,7 +85,6 @@ def scrape_channel_live_video_ids(channel_id):
 def find_active_stream(youtube, channel_id):
     candidate_ids = scrape_channel_live_video_ids(channel_id)
 
-    # Also add latest 5 items from Uploads playlist as backup
     uploads_id = "UU" + channel_id[2:] if channel_id.startswith("UC") else None
     if uploads_id:
         try:
@@ -111,7 +100,6 @@ def find_active_stream(youtube, channel_id):
         except Exception:
             pass
 
-    # Check all candidate video IDs in a single 1-unit API call
     if candidate_ids:
         try:
             v_res = youtube.videos().list(
@@ -151,16 +139,11 @@ def get_live_chat_id(youtube, video_id, target_channel_id):
         return "RETRY"
 
 
-def choose_next_message(recent_history, msg_counter, next_cmd_check, cmd_index):
-    if msg_counter >= next_cmd_check:
-        cmd = COMMANDS[cmd_index % len(COMMANDS)]
-        if cmd not in recent_history:
-            return cmd, True
-
+def choose_next_message(recent_history):
     available = [m for m in SAFE_MESSAGES if m not in recent_history]
     if not available:
         available = SAFE_MESSAGES
-    return random.choice(available), False
+    return random.choice(available)
 
 
 def send_chat_message(youtube, live_chat_id, text):
@@ -185,25 +168,6 @@ def send_chat_message(youtube, live_chat_id, text):
         return False
 
 
-def log_streamlabs_reply(youtube, live_chat_id):
-    try:
-        time.sleep(6)
-        res = youtube.liveChatMessages().list(
-            liveChatId=live_chat_id,
-            part="snippet,authorDetails",
-            maxResults=15
-        ).execute()
-        items = res.get("items", [])
-        print("--- Checking Chat for @Streamlabs Reply ---", flush=True)
-        for item in items[-8:]:
-            author = item.get("authorDetails", {}).get("displayName", "Unknown")
-            text = item.get("snippet", {}).get("displayMessage", "")
-            print(f"  [Chat] {author}: {text}", flush=True)
-        print("-------------------------------------------", flush=True)
-    except Exception as e:
-        print(f"Could not read chat reply: {e}", flush=True)
-
-
 def main():
     youtube = get_youtube_client()
     target_channel_id = TARGET_CHANNEL_ID
@@ -216,7 +180,7 @@ def main():
         video_id = extract_video_id(VIDEO_ID_OR_URL)
         live_chat_id = get_live_chat_id(youtube, video_id, target_channel_id)
     else:
-        # STANDBY MODE: Check every 3 minutes for up to 90 minutes (30 attempts) instead of quitting in 1 second!
+        # STANDBY MODE: Check every 3 minutes for up to 90 minutes (30 attempts)
         for attempt in range(1, 31):
             video_id, live_chat_id = find_active_stream(youtube, target_channel_id)
             if video_id and live_chat_id and live_chat_id != "RETRY":
@@ -231,25 +195,13 @@ def main():
     print(f"Connected to @T1RANJHA Live Chat ID: {live_chat_id}", flush=True)
 
     recent_history = deque(maxlen=4)
-    msg_counter = 0
-    next_cmd_check = random.randint(6, 9)
-    cmd_index = 0
     consecutive_failures = 0
     start_time = time.time()
-    sent_welcome = False
 
     # Farm for up to 5 hours (18000s) after stream starts
     while time.time() - start_time < 18000:
         try:
-            if not sent_welcome:
-                msg = WELCOME_MESSAGE
-                is_cmd = False
-                sent_welcome = True
-            else:
-                msg, is_cmd = choose_next_message(
-                    recent_history, msg_counter, next_cmd_check, cmd_index
-                )
-
+            msg = choose_next_message(recent_history)
             result = send_chat_message(youtube, live_chat_id, msg)
 
             if result == "ENDED":
@@ -258,13 +210,6 @@ def main():
             elif result is True:
                 consecutive_failures = 0
                 recent_history.append(msg)
-                if is_cmd:
-                    log_streamlabs_reply(youtube, live_chat_id)
-                    msg_counter = 0
-                    next_cmd_check = random.randint(6, 9)
-                    cmd_index += 1
-                else:
-                    msg_counter += 1
             else:
                 consecutive_failures += 1
                 print(f"Retry {consecutive_failures}/6 - Rebuilding YouTube client...", flush=True)
@@ -294,4 +239,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                
